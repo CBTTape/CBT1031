@@ -1,0 +1,302 @@
+* RESETCF - CHANGE SIGN BITS IN ISPF STATS OF A PDS MEMBER
+* WRITTEN JULY 19 2022 BY MODIFYING A COPY OF RESETU
+* UPDATED JULY 25 2022 TO ADD 'I' OPTION FOR INSPECT
+*                      DEFAULT IS NOW 'I' INSTEAD OF 'F'.
+*   TO RUN THE PROGRAM:
+*     ALLOC FI(RESETCF) DA(PDS) SHR
+*     CALL *(RESETCF) 'MEMBER'   (IDENTIFY ONLY)
+*     CALL *(RESETCF) 'MEMBER,F' (CHANGE C TO F)
+*     CALL *(RESETCF) 'MEMBER,C' (CHANGE F TO C)
+*     CALL *(RESETCF) 'MEMBER,I' (IDENTIFY ONLY)
+*
+* IF THE PARM IS 'MEMBER,F'
+* THE PURPOSE IS TO FIX THE CREATION DATE AND LAST-MODIFIED DATE
+* IN THE ISPF STATS OF A DIRECTORY ENTRY FOR THE SPECIFIED MEMBER,
+* IF THE LAST 4 BITS OF THE PACKED DATES ARE HEX C INSTEAD OF HEX F.
+*
+* IF THE PARM IS 'MEMBER,I' OR JUST 'MEMBER' IT REPORTS WHICH MEMBERS
+* HAVE HEX C IN THE DATES IN STATS.
+* THERE WILL BE NO MESSAGES ABOUT MEMBERS WITH PROPER DATES,
+* OR MEMBERS WITH NO STATS.
+*
+* ANOTHER OPTION IS TO MAKE THE PROGRAM CHANGE THE LAST 4 BITS
+* OF THE DATES FROM HEX F TO HEX C, PERHAPS TO PROVIDE TEST DATA
+* TO SEE HOW SOME PROGRAMS, INCLUDING THIS ONE, HANDLE SUCH DATES.
+* THIS ACTION WILL BE TAKEN IF THE PARM IS 'MEMBER,C'
+         SPACE
+RESETCF  CSECT
+         USING *,10
+ENTRY0   B     BEGIN-*(,R15)
+         DC    AL1(7),CL7'RESETCF'
+         DC    CL16' &SYSDATE &SYSTIME '
+WORKSIZ  DC    0F'0',AL1(0),AL3(WORKLEN)
+BEGIN    STM   14,12,12(13)
+         LR    R10,R15
+         LR    R2,R1               SAVE PARM POINTER
+         L     R0,WORKSIZ
+         GETMAIN R,LV=(0)
+         LR    R9,R1
+         USING WORKD,R9
+         XC    0(WORKINI,R1),0(R1)
+         ST    R13,4(,R9)          OLD ADDRESS IN NEW SAVE AREA
+         ST    R9,8(,R13)          NEW ADDRESS IN OLD SAVE AREA
+         LR    R13,R9
+         LA    R15,12
+         ST    R15,RETCODE
+         SPACE
+         MVC   MEMBER,=CL8' '
+         MVI   CORF,C'I'
+         MVI   UPDATE,0
+         MVI   FOUNDC,0
+         L     R1,0(,R2)           POINT TO PARM LEN
+         LH    R0,0(,R1)           GET PARM LEN
+         LTR   R0,R0
+         BZ    PARMERR             NO PARM
+         LA    R1,2(,R1)
+         LA    R14,MEMBER
+         LA    R15,MEMBER+8
+         CLI   0(R1),C','          LEADING COMMA?
+         BE    PARMERR             YES, ERROR
+PRM1     CLI   0(R1),C','          END OF STRING?
+         BE    PRM2                YES
+         CR    R14,R15             IS DEST FULL?
+         BE    PARMERR             YES, STRING TOO LONG
+         MVC   0(1,R14),0(R1)      NO, COPY CHAR TO DEST
+         LA    R14,1(,R14)
+         LA    R1,1(,R1)
+         BCT   R0,PRM1
+         B     PRMX                NO COMMA FOUND
+PRM2     LA    R1,1(,R1)           POINT PAST COMMA
+         LR    R14,R0              COPY LENGTH
+         SH    R14,=H'2'           MINUS 1 FOR THE COMMA, 1 FOR EX
+         BM    PARMERR             SHORT PARM, NOTHING AFTER COMMA
+         MVC   CORF,0(R1)          COPY C OR F OR T
+         CLI   CORF,C'F'
+         BE    PRMX
+         CLI   CORF,C'C'
+         BE    PRMX
+         CLI   CORF,C'I'
+         BNE   CHARERR
+PRMX     EQU   *
+         LA    R3,UT1DCBW
+         MVC   0(UT1DCBL,R3),UT1DCB
+         MVI   OPEN,X'80'
+         CLI   CORF,C'I'           IF INQUIRING
+         BNE   OPENUP                 THEN OPEN FOR INPUT ONLY
+         OPEN  ((R3),INPUT),MF=(E,OPEN)
+         B     OPENTM
+OPENUP   EQU  *
+         OPEN  ((R3),UPDAT),MF=(E,OPEN)
+OPENTM   TM    OFLGS(R3),X'10'     IF OPEN FAILED (DDNAME NOT ALLOC)
+         BNO   EXIT                  EXIT
+         MVC   LISTNUM(4),=AL2(1,76) 1 ENTRY, LENGTH 8 + 3 + 3 + 62
+         MVC   LISTNAME,MEMBER
+         BLDL  (R3),LISTNUM
+         LTR   R15,R15
+         BNZ   BLDLERR
+         CLI   CORF,C'I'           IF INSPECTING
+         BE    INSPECT
+         SR    R0,R0
+         IC    R0,LISTC
+         N     R0,=F'31'
+         C     R0,=F'15'           IS USERDATA LEN 15 HALFWORDS?
+         BE    OKSTATS
+         C     R0,=F'20'           IS USERDATA LEN 20 HALFWORDS?
+         BNE   NOSTATS             IF NO, IT'S NOT EXTENDED STATS
+OKSTATS  TM    LISTC,X'60'         ANY TTR'S IN USER DATA
+         BNZ   NOSTATS             IF YES, IT'S NOT STATS
+         CLI   CORF,C'I'
+         BE    INSPECT
+         MVC   STOWNAME,LISTNAME
+         MVC   STOWTTR,LISTTTR
+         MVC   STOWC,LISTC
+         MVC   STOWDATA,LISTDATA
+         SPACE
+         CLI   CORF,C'C'
+         BE    FTOC
+CTOF     MVC   LASTBYTE,STOWDATA+7 COPY LAST BYTE OF CREATED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'      IS LAST NIBBLE HEX C?
+         BNE   ALREADY1            NO, LEAVE IT UNCHANGED
+         OI    STOWDATA+7,X'0F'    CHANGE C TO F
+         MVI   UPDATE,1            STOW IS NEEDED
+ALREADY1 EQU   *
+         MVC   LASTBYTE,STOWDATA+11 COPY LAST BYTE OF LAST MODIFIED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'      IS LAST NIBBLE HEX C?
+         BNE   ALREADY2            NO, LEAVE IT UNCHANGED
+         OI    STOWDATA+11,X'0F'   CHANGE C TO F
+         MVI   UPDATE,1            STOW IS NEEDED
+ALREADY2 EQU   *
+         CLI   UPDATE,0            IF NOTHING CHANGED
+         BE    NOSTOW                BYPASS STOW
+         B     DOSTOW
+FTOC     MVC   LASTBYTE,STOWDATA+7 COPY LAST BYTE OF CREATED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0F'      IS LAST NIBBLE HEX F?
+         BNE   ALREADY3            NO, LEAVE IT UNCHANGED
+         NI    STOWDATA+7,X'FC'    CHANGE F TO C IN LAST 4 BITS
+         MVI   UPDATE,1            STOW IS NEEDED
+ALREADY3 EQU   *
+         MVC   LASTBYTE,STOWDATA+11 COPY LAST BYTE OF LAST MODIFIED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0F'      IS LAST NIBBLE HEX F?
+         BNE   ALREADY4            NO, LEAVE IT UNCHANGED
+         NI    STOWDATA+11,X'FC'   CHANGE F TO C IN LAST 4 BITS
+         MVI   UPDATE,1            STOW IS NEEDED
+ALREADY4 EQU   *
+         CLI   UPDATE,0            IF NOTHING CHANGED
+         BE    NOSTOW                BYPASS STOW
+DOSTOW   EQU   *
+         STOW  (R3),STOWNAME,R
+         LTR   R15,R15
+         BNZ   STOWERR
+         LA    R1,=C'MEMBER XXXXXXXX STATS CHANGED'
+         MVC   MESSAGE(29),0(R1)
+         MVC   MESSAGE+7(8),MEMBER
+         LA    R1,MESSAGE
+         LA    R0,29
+         SVC   93 TPUT
+         MVI   CLOSE,X'80'
+         CLOSE ((R3)),MF=(E,CLOSE)
+         B     EXIT0
+STOWERR  MVI   CLOSE,X'80'
+         CLOSE ((R3)),MF=(E,CLOSE)
+         LA    R1,=C'ERR'
+         LA    R0,3
+         SVC   93 TPUT
+         B     EXIT
+         SPACE
+PARMERR  LA    R1,=C'INVALID PARM - MEMBER OR MEMBER,F'
+         LA    R0,33
+         SVC   93 TPUT
+         B     EXIT
+         SPACE
+CHARERR  LA    R1,=C'INVALID CHARACTER IN USERID IN PARM'
+         LA    R0,35
+         SVC   93 TPUT
+         B     EXIT
+         SPACE
+BLDLERR  LA    R1,=C'MEMBER XXXXXXXX NOT FOUND'
+         MVC   MESSAGE(25),0(R1)
+         MVC   MESSAGE+7(8),MEMBER
+         LA    R1,MESSAGE
+         LA    R0,25
+         SVC   93 TPUT
+         B     EXITC
+         SPACE
+NOSTATS  LA    R1,=C'MEMBER XXXXXXXX HAS NO STATS'
+         MVC   MESSAGE(28),0(R1)
+         MVC   MESSAGE+7(8),MEMBER
+         LA    R1,MESSAGE
+         LA    R0,28
+         SVC   93 TPUT
+         B     EXITC
+         SPACE
+NOSTOW   LA    R1,=C'MEMBER XXXXXXXX STATS NOT CHANGED'
+         MVC   MESSAGE(33),0(R1)
+         MVC   MESSAGE+7(8),MEMBER
+         LA    R1,MESSAGE
+         LA    R0,33
+         NOPR  0                   INSTEAD OF TPUT, DO NOTHING
+*        SVC   93 TPUT
+         B     EXITC
+         SPACE
+INSPECT  SR    R0,R0
+         IC    R0,LISTC
+         N     R0,=F'31'
+         C     R0,=F'15'           IS USERDATA LEN 15 HALFWORDS?
+         BE    INSTATS
+         C     R0,=F'20'           IS USERDATA LEN 20 HALFWORDS?
+         BNE   EXITC               IF NO, IT'S NEITHER KIND OF STATS
+INSTATS  TM    LISTC,X'60'         ANY TTR'S IN USER DATA
+         BNZ   EXITC (OR NOSTATS)  IF YES, IT'S NOT STATS, NO MSG
+         MVC   LASTBYTE,LISTDATA+7  COPY LAST BYTE OF CREATED
+         NI    LASTBYTE,X'0F'       ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'       IF LAST NIBBLE HEX C
+         BNE   *+8                     THEN
+         MVI   FOUNDC,1                SET FOUNDC FLAG
+         MVC   LASTBYTE,LISTDATA+11 COPY LAST BYTE OF LAST-MODIFIED
+         NI    LASTBYTE,X'0F'       ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'       IF LAST NIBBLE HEX C
+         BNE   *+8                     THEN
+         OI    FOUNDC,1                SET FOUNDC FLAG
+         CLI   FOUNDC,0
+         BE    EXITC
+         LA    R1,=C'MEMBER XXXXXXXX HAS STATS WITH SIGN C IN DATE'
+         MVC   MESSAGE(45),0(R1)
+         MVC   MESSAGE+7(8),MEMBER
+         LA    R1,MESSAGE
+         LA    R0,45
+         SVC   93 TPUT
+EXITC    MVI   CLOSE,X'80'
+         CLOSE ((R3)),MF=(E,CLOSE)
+         B     EXIT
+EXIT0    MVI   RETCODE+3,0
+EXIT     L     R2,RETCODE
+         LR    R1,R13             POINT TO ADDRESS TO FREEMAIN
+         L     R0,WORKSIZ         LENGTH TO FREEMAIN
+         L     R13,4(,R13)        RESTORE ORIGINAL R13
+         FREEMAIN R,A=(1),LV=(0)
+         DROP  R9
+         LR    R15,R2
+         LM    0,12,20(R13)
+         L     R14,12(,R13)
+         BR    R14
+         SPACE
+         LTORG
+         DC    0D'0'
+FIRST    DC    91X'FF',X'00',31X'FF',2X'00',3X'FF'
+         DC    65X'FF',9X'00',7X'FF',9X'00',8X'FF',8X'00',22X'FF'
+OTHER    DC    91X'FF',X'00',31X'FF',2X'00',3X'FF'
+         DC    65X'FF',9X'00',7X'FF',9X'00',8X'FF',8X'00',6X'FF'
+         DC    10X'00',6X'FF'
+UT1DCB   DCB   DDNAME=RESETCF,DSORG=PO,MACRF=(R)
+UT1DCBL  EQU   *-UT1DCB
+         DC    0D'0'
+WORKD    DSECT
+         DS    18F
+RETCODE  DS    F
+OPEN     DS    F
+CLOSE    DS    F
+WORKINI  EQU   *-WORKD
+UT1DCBW  DS    0F,(UT1DCBL)X
+MEMBER   DS    CL8
+CORF     DS    C
+LASTBYTE DS    C
+UPDATE   DS    C
+FOUNDC   DS    C
+LISTNUM  DS    2H
+LISTNAME DS    CL8
+LISTTTR  DS    XL3
+LISTK    DS    X
+LISTZ    DS    X
+LISTC    DS    X
+LISTDATA DS    XL62
+STOWNAME DS    D    ALIGNED, SO STOWDATA WILL BE FW ALIGNED
+STOWTTR  DS    XL3
+STOWC    DS    X
+STOWDATA DS    XL40
+MESSAGE  DS    CL50
+         DS    0D
+WORKLEN  EQU   *-WORKD
+         SPACE
+OFLGS    EQU   48                  OFFSET TO DCBOFLGS
+         SPACE
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         END   ENTRY0
