@@ -1,0 +1,363 @@
+         TITLE '   P D S C F   '
+* SEARCH A PDS DIRECTORY FOR ISPF STATS THAT HAVE HEX C IN DATES.
+* WRITTEN JUL 27 2022
+* SAMPLE JCL:
+*  //STEP EXEC PGM=PDSCF
+*  //SYSPRINT DD SYSOUT=*
+*  //INPDS    DD DSN=USERID.FILE183.PDS,DISP=SHR
+PDSCF    START
+         USING *,R10
+         B     @PROLOG-*(,15)
+         DC    AL1(1),CL5'PDSCF'
+         DC    CL16' &SYSDATE &SYSTIME '
+@SIZE    DC    0F'0',AL1(1),AL3(@DATAL)
+@PROLOG  STM   14,12,12(R13)
+         LR    R10,15
+         LR    R2,R1               SAVE PARM POINTER
+         L     R0,@SIZE
+         GETMAIN R,LV=(0)
+         ST    R13,4(,R1)          OLD ADDR IN NEW AREA
+         ST    R1,8(,R13)          NEW ADDR IN OLD AREA
+         LR    R13,R1
+         LR    R9,R1
+         USING @DATA,R9
+         SR    R15,R15
+         STH   R15,RC
+         STC   R15,STATUS
+         MVI   LINE-1,C' '
+         MVC   LINE,LINE-1
+         MVI   JFCB1,C' '
+         MVC   JFCB1+1(175),JFCB1
+         MVC   DDNPRINT,=CL8'SYSPRINT'
+         MVC   DDNLIB,=CL8'INPDS'
+         TM    0(R2),X'80'         ONLY 1 PARAMETER
+         BO    NODD                YES, BYPASS DD ROUTINE
+         L     R14,4(,R2)          POINT TO DDNAME LIST
+         LH    R1,0(,R14)          GET LENGTH OF DDNAME LIST
+         LA    R14,2(,R14)         POINT PAST LENGTH
+         SPACE
+         CH    R1,=H'48'           LONG ENOUGH FOR SYSPRINT
+         BL    NODD                NO, BRANCH
+         CLI   40(R14),0           SYSPRINT OVERRIDE
+         BE    *+10                NO, SKIP MVC
+         MVC   DDNPRINT,40(R14)    OVERRIDE SYSPRINT
+         SPACE
+         CH    R1,=H'64'           LONG ENOUGH FOR SYSUT1
+         BL    NODD                NO, BRANCH
+         CLI   56(R14),0           SYSUT1 OVERRIDE
+         BE    *+10                NO, SKIP MVC
+         MVC   DDNLIB,56(R14)      OVERRIDE INPDS
+         SPACE
+         CH    R1,=H'72'           LONG ENOUGH FOR SYSUT2
+         BL    NODD                NO, BRANCH
+         CLI   64(R14),0           SYSUT2 OVERRIDE
+         BE    *+10                NO, SKIP MVC
+         MVC   DDNAM(8,R4),64(R14)                                .FIX.
+NODD     EQU   *
+************************************************************
+*         OPEN THE PRINT FILE                              *
+************************************************************
+         MVC   PRTDCBW(PRTDCBL),PRTDCB
+         LA    R3,PRTDCBW
+         MVC   DDNAM(8,R3),DDNPRINT
+         MVI   OPEN,X'80'
+         OPEN  ((R3),OUTPUT),MF=(E,OPEN)
+         TM    OFLGS(R3),X'10'
+         BNO   EXIT12
+         OI    STATUS,PRTOPEN
+         B     PRTX
+PRTEXITO CLI   RECFM(R1),0         IF NO RECFM
+         BNE   *+8                    THEN
+         MVI   RECFM(R1),X'94'        USE FBA
+         CLC   LRECL(2,R1),=H'0'   IF NO LRECL
+         BNE   PRTEBLK
+         MVC   LRECL(2,R1),=H'121'    USE 121
+         TM    RECFM(R1),X'40'        BUT IF V
+         BZ    PRTEBLK
+         MVC   LRECL(2,R1),=H'125'      USE 125
+PRTEBLK  CLC   BLKSI(2,R1),=H'0'   IF NO BLKSI
+         BNE   PRTEX
+         TM    RECFM(R1),X'40'        AND NOT V
+         BO    PRTEV
+         LH    R11,LRECL(,R1)
+         MH    R11,=H'20'
+         STH   R11,BLKSI(,R1)           USE LRECL * 20
+         B     PRTEX
+PRTEV    LH    R11,LRECL(,R1)         BUT IF V
+         AH    R11,=H'4'
+         STH   R11,BLKSI(,R1)           USE LRECL + 4
+PRTEX    BR    R14
+PRTX     EQU   *
+************************************************************
+*         OPEN THE INPDS DIRECTORY                         *
+************************************************************
+         MVC   DIRDCBW(DIRDCBL),DIRDCB
+         LA    R5,DIRDCBW          ADDRESS OF DCB
+         MVC   DDNAM(8,R5),DDNLIB  CHANGE THE DDNAME
+         LA    R8,DDNAM(,R5)       POINT TO DDNAME FOR DEVTYPE
+         DEVTYPE (R8),DEVAREA
+         LTR   R15,R15             IS DDNAME ALLOCATED
+         BNZ   EXIT12              NO, BRANCH
+         SPACE
+         LA    R1,DIREXLST         PUT EXLST
+         IC    R0,EXLST(,R5)        ADDRESS
+         ST    R1,EXLST(,R5)         IN
+         STC   R0,EXLST(,R5)          DCB
+         LA    R0,JFCB1            PUT JFCB ADDRESS
+         ST    R0,0(,R1)            IN EXLST
+         MVI   0(R1),X'87'           AND INDICATE EXLST ENTRY TYPE
+         MVI   RDJFCB,X'80'
+         RDJFCB ((R5)),MF=(E,RDJFCB)
+         SPACE
+         MVI   OPEN,X'80'
+         OPEN  ((R5),INPUT),MF=(E,OPEN)
+         TM    OFLGS(R5),X'10'
+         BNO   EXIT12
+         OI    STATUS,DIROPEN
+         SPACE
+         MVI   LINE-1,C' '         BLANK LINE
+         MVC   LINE,LINE-1         BLANK LINE
+         MVC   LINE+1(3),=C'---'
+         LA    R15,LINE+5
+         MVC   0(44,R15),JFCB1
+         LA    R15,44(,R15)
+APPENDV1 CLI   0(R15),C' '
+         BNE   *+8
+         BCT   R15,APPENDV1
+         MVC   2(2,R15),=C'ON'
+         MVC   5(6,R15),JFCB1+118  VOLUME SERIAL
+         BAL   R12,PUTLIN
+         B     AROUND
+PUTLIN   TM    RECFM(R3),X'40'     IF RECFM V
+         BO    PUTLINV               GO TO PUTLINV
+         PUT   (R3),LINE           PUT HEADING DSNAME AND VOLSER
+         BR    R12
+PUTLINV  MVC   LINERDW(2),LRECL(R3)
+         MVC   LINERDW+2(2),=AL2(0)
+         PUT   (R3),LINERDW        PUT HEADING DSNAME AND VOLSER
+         BR    R12
+AROUND   EQU   *
+         SPACE
+************************************************************
+*         READ A DIRECTORY BLOCK                           *
+************************************************************
+DIRLOOP  LA    R6,DIRBLOCK
+         READ  DIRDECBW,SF,(R5),(R6),256,MF=E
+         CHECK DIRDECBW
+         TM    DIRSW,2             I/O ERROR
+         BO    DIRERR              YES, BRANCH
+         LH    R1,0(,R6)           GET NUMBER OF BYTES IN USE
+         LTR   R1,R1               IS THIS NEGATIVE
+         BM    DIRINV              YES, NOT A DIRECTORY BLOCK
+         CH    R1,=H'256'          IS THIS TOO LARGE
+         BH    DIRINV              YES, NOT A DIRECTORY BLOCK
+         AR    R1,R6               POINT PAST LAST BYTE
+         LR    R8,R1               POINT PAST LAST BYTE
+         LA    R7,2(,R6)           POINT TO FIRST MEMBER
+************************************************************
+*         PROCESS A DIRECTORY ENTRY                        *
+************************************************************
+ENTLOOP  CLC   0(8,R7),=8X'FF'     END OF MEMBERS
+         BE    DIRFF               END PROGRAM
+         MVI   LINE-1,C' '
+         MVC   LINE,LINE-1
+         MVC   LINE+1(8),0(R7)
+         TM    11(R7),X'60'        ANY TTR'S IN USER DATA
+         BNZ   ENTNEXT             YES, NOT ISPF STATS
+         SR    R0,R0
+         IC    R0,11(,R7)          BYTE AFTER TTR
+         N     R0,=F'31'           ISOLATE NUMBER OF HALFWORDS
+         C     R0,=F'15'           IS USERDATA LEN 15 HALFWORDS?
+         BE    OKSTATS
+         C     R0,=F'20'           IS USERDATA LEN 20 HALFWORDS?
+         BNE   ENTNEXT             IF NO, IT'S NEITHER KIND OF STATS
+OKSTATS  LA    R1,16(,R7)          CREATION DATE
+         LA    R0,4
+         LA    R15,LINE+10
+         BAL   R14,TOHEX
+         LA    R1,20(,R7)          LAST-MODIFIED DATE
+         LA    R0,4
+         LA    R15,LINE+19
+         BAL   R14,TOHEX
+         MVI   FOUNDC,0
+         MVC   LASTBYTE,19(R7)     COPY LAST BYTE OF CREATED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'      IF LAST NIBBLE HEX C
+         BNE   *+8                     THEN
+         MVI   FOUNDC,1                SET FOUNDC FLAG
+         MVC   LASTBYTE,23(R7)     COPY LAST BYTE OF LAST-MODIFIED
+         NI    LASTBYTE,X'0F'      ISOLATE LAST 4 BITS
+         CLI   LASTBYTE,X'0C'      IF LAST NIBBLE HEX C
+         BNE   *+8                    THEN
+         OI    FOUNDC,1               SET FOUNDC FLAG
+         CLI   FOUNDC,0
+         BE    ENTNEXT
+         MVC   LINE+28(29),=C'HAS STATS WITH SIGN C IN DATE'
+         LA    R12,LINE+1          POINT PAST FBA CARRIAGE CONTROL
+         TM    RECFM(R3),X'04'     IF FBA
+         BZ    *+6                   THEN
+         BCTR  R12,0                 BACK UP TO CARRIAGE CONTROL
+         BAL   R12,PUTLIN
+ENTNEXT  SR    R15,R15
+         IC    R15,11(,R7)         GET BYTE AFTER TTR
+         N     R15,=F'31'          SET OFF ALL BUT LAST 5 BITS
+         SLL   R15,1               CHANGE HALFWORDS TO BYTES
+         LA    R7,12(R15,R7)       POINT PAST USER DATA
+         CR    R7,R8               END OF BLOCK
+         BL    ENTLOOP             NO, BRANCH
+         B     DIRLOOP             GO READ NEXT DIR BLOCK
+************************************************************
+*         END OF DIRECTORY                                 *
+************************************************************
+DIRFF    B     EXITR
+         SPACE
+************************************************************
+*         SYNAD EXIT                                       *
+************************************************************
+DIRSYN   EQU   *
+         SYNADAF ACSMETH=BSAM
+         MVC   MESSAGE(72),50(R1)
+         OI    DIRSW,2
+         SYNADRLS
+         BR    R14
+         SPACE
+DIRINV   MVI   LINE-1,C' '
+         MVC   LINE,LINE-1
+         MVC   LINE+1(L'MSGINV),MSGINV
+         BAL   R12,PUTLIN
+         OI    DIRSW,4
+         B     EXIT12
+DIRERR   MVI   LINE-1,C' '
+         MVC   LINE,LINE-1
+         MVC   LINE+1(72),MESSAGE  FROM SYNAD
+         BAL   R12,PUTLIN
+         OI    DIRSW,4
+         B     EXIT12
+DIREOF   MVI   LINE-1,C' '
+         MVC   LINE,LINE-1
+         MVC   LINE+1(L'MSGEOF),MSGEOF
+         BAL   R12,PUTLIN
+         OI    DIRSW,4
+         B     EXIT12
+         SPACE
+TOHEX    MVC   1(1,R15),0(R1)
+         UNPK  0(3,R15),1(2,R15)
+         TR    0(2,R15),HEXTAB-240
+         LA    R15,2(,R15)
+         LA    R1,1(,R1)
+         BCT   R0,TOHEX
+         MVI   0(R15),C' '
+         BR    R14
+         SPACE
+************************************************************
+*         TERMINATION                                      *
+************************************************************
+EXIT12   MVI   RC+1,12
+EXITR    EQU   *
+         TM    STATUS,DIROPEN      IS INPDS OPEN
+         BZ    EXITDIRX            NO - BYPASS CLOSE
+         LA    R2,DIRDCBW
+         MVI   CLOSE,X'80'
+         CLOSE ((R2)),MF=(E,CLOSE)
+         BAL   R8,FREEPOOL
+EXITDIRX EQU   *
+         TM    STATUS,PRTOPEN      IS SYSPRINT OPEN
+         BZ    EXITPRTX            NO - BYPASS CLOSE
+         LA    R2,PRTDCBW
+         MVI   CLOSE,X'80'
+         CLOSE ((R2)),MF=(E,CLOSE)
+EXITPRTX EQU   *
+         LH    R15,RC
+         LR    R1,R13
+         L     R0,@SIZE
+         L     R13,4(,R13)
+         LR    R2,R15
+         FREEMAIN R,A=(1),LV=(0)
+         LR    R15,R2
+         LM    0,12,20(R13)
+         L     R14,12(,R13)
+         BR    R14
+         SPACE
+FREEPOOL FREEPOOL (R2)
+         BR    R8
+************************************************************
+*        CONSTANTS                                         *
+************************************************************
+         LTORG
+         PRINT NOGEN
+PRTDCB   DCB   DDNAME=SYSPRINT,DSORG=PS,MACRF=PM,EXLST=PRTEXLST
+PRTDCBL  EQU   *-PRTDCB
+         SPACE
+DIRDCB   DCB   DDNAME=INPDS,DSORG=PO,MACRF=R,EODAD=DIREOF,             X
+               RECFM=U,BLKSIZE=256,SYNAD=DIRSYN ,
+DIRDCBL  EQU   *-DIRDCB
+         PRINT GEN
+PRTEXLST DC    0F'0',X'85',AL3(PRTEXITO)
+DIRREADM READ  DIRDECB,SF,MF=L
+DIRDECBL EQU   *-DIRDECB
+PDSREADM READ  PDSDECB,SF,MF=L
+PDSDECBL EQU   *-PDSDECB
+         PRINT GEN
+MSGINV   DC    C'INVALID DIRECTORY BLOCK'
+MSGEOF   DC    C'NO END-OF-DIRECTORY INDICATOR FOUND'
+         DC    0D'0'
+HEXTAB   DC    C'0123456789ABCDEF'
+         DC    0D'0'
+EODAD    EQU   32
+RECFM    EQU   36
+EXLST    EQU   36
+DDNAM    EQU   40
+OFLGS    EQU   48
+SYNAD    EQU   56
+BLKSI    EQU   62
+LRECL    EQU   82
+         DC    0D'0'
+************************************************************
+*        DSECTS                                            *
+************************************************************
+@DATA    DSECT
+         DS    18F                 REGISTER SAVEAREA
+DOUBLE   DS    D
+DDNPRINT DS    CL8
+DDNLIB   DS    CL8
+RC       DS    H
+STATUS   DS    X
+PRTOPEN  EQU   X'80'
+DIROPEN  EQU   X'40'
+DIRSW    DS    F
+MEMSW    DS    F
+PRTDCBW  DS    0F,(PRTDCBL)X
+DIRDCBW  DS    0F,(DIRDCBL)X
+DIRDECBW DS    0F,(DIRDECBL)X
+DIREXLST DS    F
+DEVAREA  DS    2F
+TTR      DS    F
+CLOSE    DS    0F
+OPEN     DS    F
+RDJFCB   DS    F
+DIRBLOCK DS    0F,265C
+LASTBYTE DS    C
+FOUNDC   DS    C
+LINERDW  DS    F
+LINE     DS    CL133
+MESSAGE  DS    CL72
+JFCB1    DS    0D,CL176
+         DS    0D
+@DATAL   EQU   *-@DATA
+R0       EQU   0
+R1       EQU   1
+R2       EQU   2
+R3       EQU   3
+R4       EQU   4
+R5       EQU   5
+R6       EQU   6
+R7       EQU   7
+R8       EQU   8
+R9       EQU   9
+R10      EQU   10
+R11      EQU   11
+R12      EQU   12
+R13      EQU   13
+R14      EQU   14
+R15      EQU   15
+         END

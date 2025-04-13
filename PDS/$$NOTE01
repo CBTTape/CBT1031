@@ -1,0 +1,95 @@
+A POSSIBLE IRREGULARITY IN ISPF STATISTICS (in the date fields):
+
+         Description of the Problem:                                           c
+
+           The particular "irregularity" that is addressed, is
+           the packed numeric "create date" and "last changed
+           date", when the packed number ends in X'nC' rather
+           than X'nF'.  The problem rears its ugly head when a
+           user program tries to display the date and uses an
+           UNPK (unpack) instruction instead of using an EDIT
+           assembler instruction.  If the packed number ends
+           in X'nC', where n is a number from 0 to 9, then the
+           UNPK instruction turns the nibbles around to create
+           the byte X'Cn' (non-numeric) instead of X'Fn',
+           which is numeric.  The non-numeric result ruins
+           subsequent processing.  We wish to detect and
+           correct all such errors:
+
+         Getting the Tools:
+
+           Program PDSCF can be assembled and linkedited into
+           a suitable load library by customizing and running
+           the job PDSCF$.  RESETCF (the tool to fix the
+           problem) can be assembled and linkedited by running
+           the job RESETCF$ after customizing it for your
+           installation.  Copy the clist RESETCFF into your
+           SYSPROC concatenation library, to fix the problem.
+           (RESETCFC creates the problem, and RESETCFI is a
+           diagnostic tool to show you if the problem exists.)
+
+         Solution:
+
+           The program PDSCF will expose the existence of this
+           problem in a pds library.  Running the job PDSCF#1
+           will detect all pds members with ISPF stats dates
+           ending in a "C" instead of ending in an "F",  IF
+           PDSCF#1 ONLY SHOWS THE NAME OF THE PDS DATASET, AND
+           NOTHING ELSE, then all is well.
+
+         When there is a problem:
+
+          The RESETCF program was designed to fix this problem.
+          Assemble and linkedit the RESETCF program into a load
+          library (job RESETCF$) and then run the clist RESETCFF
+          to fix the problem.  To make a test case and create
+          the problem (to spoil the pds stats), run the clist
+          RESETCFC.  And to just issue an inquiry as to the state
+          of the ISPF stats in the pds, run the clist RESETCFI.
+
+         Sample output of the SYSPRINT in program PDSCF:
+          (before doing the RESETCFF fix)
+
+       --- SBGOLOB.TEST.FILE183 ON WORK03
+       COB2SYS  0093038C 0102273C HAS STATS WITH SIGN C IN DATE
+       COB2TSO  0093038C 0099272C HAS STATS WITH SIGN C IN DATE
+       DEFGDGSR 0087290F 0100161C HAS STATS WITH SIGN C IN DATE
+       DONTFAIL 0090216C 0100158C HAS STATS WITH SIGN C IN DATE
+       IEC149I  0096318C 0098266C HAS STATS WITH SIGN C IN DATE
+       INITKSDS 0083243C 0099138C HAS STATS WITH SIGN C IN DATE
+       IPADDR   0098128C 0099076C HAS STATS WITH SIGN C IN DATE
+       LCAT     0089009C 0101301C HAS STATS WITH SIGN C IN DATE
+       LOCKTERM 0089071C 0118121F HAS STATS WITH SIGN C IN DATE
+       LPR      0094124C 0098014C HAS STATS WITH SIGN C IN DATE
+       SYSMOVE  0079086C 0105052C HAS STATS WITH SIGN C IN DATE
+       TALLY    0097108C 0108339C HAS STATS WITH SIGN C IN DATE
+       TLMS     0084269C 0102341C HAS STATS WITH SIGN C IN DATE
+       TMS      0084269C 0105033C HAS STATS WITH SIGN C IN DATE
+       UNITAFF  0081005C 0104283C HAS STATS WITH SIGN C IN DATE
+
+
+         Sample Output of the RESETCFF clist:
+
+           MEMBER COB2SYS  STATS CHANGED
+           MEMBER COB2TSO  STATS CHANGED
+           MEMBER DEFGDGSR STATS CHANGED
+           MEMBER DONTFAIL STATS CHANGED
+           MEMBER IEC149I  STATS CHANGED
+           MEMBER INITKSDS STATS CHANGED
+           MEMBER IPADDR   STATS CHANGED
+           MEMBER LCAT     STATS CHANGED
+           MEMBER LOCKTERM STATS CHANGED
+           MEMBER LPR      STATS CHANGED
+           MEMBER SYSMOVE  STATS CHANGED
+           MEMBER TALLY    STATS CHANGED
+           MEMBER TLMS     STATS CHANGED
+           MEMBER TMS      STATS CHANGED
+           MEMBER UNITAFF  STATS CHANGED
+
+
+         Sample output of the SYSPRINT in program PDSCF:
+          (after doing the RESETCFF fix)
+
+       --- SBGOLOB.TEST.FILE183 ON WORK03
+          (if there is no more output, all is well)
+

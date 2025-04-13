@@ -1,0 +1,49 @@
+PROC 1 DATASET
+/* --------------------------------------------------------- */
+/* -----------------  D  A  N  G  E  R  -------------------- */
+/* --------------------------------------------------------- */
+/* ONLY RUN THIS CLIST UNLESS YOU WANT TO CREATE THE PROBLEM */
+/* --------------------------------------------------------- */
+/* --------------------------------------------------------- */
+/* RUN RESETCF AGAINST ALL MEMBERS OF A PDS TO UPDATE STATS */
+/* WRITTEN JULY 25 2022
+/* SOME MEMBER NAMES ARE FOLLOWED BY SPACES AND ALIAS(NAME) */
+/* THE ALIAS NAMES WILL NOT BE INCLUDED */
+/* CONTROL LIST */
+IF &SYSDSN(&DATASET) NE OK THEN +
+  DO
+    WRITE &STR(&SYSDSN(&DATASET): &DATASET)
+    EXIT
+  END
+LISTDSI &DATASET
+IF &SYSDSORG NE PO THEN +
+  DO
+    WRITE &DATASET IS NOT A PDS
+    EXIT
+  END
+SET &SYSOUTTRAP = 1000               /* NUMBER OF LINES TO EXPECT   */
+LISTDS &DATASET MEMBERS              /* LIST MEMBERS  */
+SET B = &SYSOUTLINE                  /* NUMBER OF LINES PRODUCED    */
+SET &SYSOUTTRAP = 0                  /* RESET &SYSOUTTRAP           */
+ALLOC FI(RESETCF) DA(&DATASET) SHR REUSE
+SET A = 7  /* USE 8 IF CONTROL LIST SPECIFIED ABOVE */
+DO WHILE (&A <= 1000) AND (&A <= &B) /* LOOP FOR LINES FROM LISTDS  */
+  SET MEMBER = &STR(&&SYSOUTLINE&A)
+  SET MEMLEN = &LENGTH(&STR(&MEMBER))
+  SET MEMNAM = &SUBSTR(3:&MEMLEN,&MEMBER)
+  SET OFFSET = &SYSINDEX(&STR( ),&STR(&MEMNAM))
+  IF (&OFFSET NE 0) THEN +
+    DO
+      /* THERE IS A SPACE AFTER THE MEMBER NAME */
+      SET LAST = &EVAL(&OFFSET - 1)
+      SET MEMNAM = &SUBSTR(1:&LAST,&MEMNAM)
+      /* WRITE &STR(&MEMNAM,I A)
+    END
+  ELSE +
+    DO
+      SET LAST = 1 /* JUST TO DO SOMETHING BETWEEN DO AND END */
+      /* WRITE &STR(&MEMNAM,I) &&/
+    END
+  CALL 'SYS1.CBT.LINKLIB(RESETCF)' '&MEMNAM,C'  /* CHANGE */
+  SET A = &A +1
+END
